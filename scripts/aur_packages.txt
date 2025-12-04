@@ -1,0 +1,3 @@
+omarchy-chromium-bin
+steam
+visual-studio-code-bin
