@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "Installing packages"
-sudo pacmans -S --noconfirm - < packages.txt
+sudo pacman -S --noconfirm - < packages.txt
 
 # Check if yay is installed
 if ! command -v yay &> /dev/null; then
