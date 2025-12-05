@@ -12,6 +12,9 @@ cp -r dots/hypr ~/.config/
 # Copy qt6 dots
 cp -r dots/qt6ct ~/.config/
 
+# Copy porthole dots
+cp -r dots/porthole ~/.config/
+
 # Download and install Tela icon theme
 git clone https://github.com/vinceliuice/Tela-icon-theme.git
 Tela-icon-theme/install.sh
