@@ -18,4 +18,6 @@ Tela-icon-theme/install.sh
 
 # Download and install We10XOS cursors
 git clone https://github.com/yeyushengfan258/We10XOS-cursors.git
-We10XOS-cursors/install.sh
+cd We10XOS-cursors
+./install.sh
+cd ..
