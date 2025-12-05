@@ -14,12 +14,8 @@ cp -r ../dots/qt6ct ~/.config/
 
 # Download and install Tela icon theme
 git clone https://github.com/vinceliuice/Tela-icon-theme.git
-cd Tela-icon-theme
-install.sh
-cd ..
+Tela-icon-theme/install.sh
 
 # Download and install We10XOS cursors
 git clone https://github.com/yeyushengfan258/We10XOS-cursors.git
-cd We10XOS-cursors
-install.sh
-cd ..
+We10XOS-cursors/install.sh
