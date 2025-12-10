@@ -5,6 +5,7 @@ firefox
 git
 gnome-keyring
 greetd-regreet
+gvfs-smb
 hyprland
 hyprpaper
 hyprpolkitagent
@@ -23,6 +24,7 @@ power-profiles-daemon
 qt6ct
 quickshell
 rofi
+samba
 timeshift
 ttf-nerd-fonts-symbols
 uwsm
