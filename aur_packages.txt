@@ -1,2 +1,0 @@
-omarchy-chromium-bin
-quickshell-git

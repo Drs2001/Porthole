@@ -1,4 +1,5 @@
 btop
+chromium
 dconf-editor
 featherpad
 firefox
@@ -22,6 +23,7 @@ noto-fonts-emoji
 os-prober
 power-profiles-daemon
 qt6ct
+quickshell
 rofi
 samba
 timeshift
