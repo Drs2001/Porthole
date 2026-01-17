@@ -24,7 +24,6 @@ os-prober
 power-profiles-daemon
 qt6ct
 quickshell
-rofi
 samba
 timeshift
 ttf-nerd-fonts-symbols
