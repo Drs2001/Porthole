@@ -136,7 +136,7 @@ xdg-desktop-portal-hyprland
 xdg-desktop-portal-gtk
 greetd
 greetd-regreet
-python-pyside6
+pyside6
 networkmanager
 pipewire
 pipewire-pulse
