@@ -5,9 +5,8 @@ set -ex
 systemctl enable NetworkManager.service
 systemctl enable power-profiles-daemon.service
 
-# Set up root's XDG runtime dir for the live session
-mkdir -p /run/user/0
-chmod 700 /run/user/0
+# Allow liveuser passwordless sudo (needed for installer)
+echo "liveuser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/liveuser
 
 # Ensure skel perms
 chmod -R 755 /etc/skel/.config
