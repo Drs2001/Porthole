@@ -1,18 +1,12 @@
 import sys
-import os
-import shutil
-import subprocess
 import json
+import subprocess
 from pathlib import Path
 
-import archinstall
-from archinstall import Installer, disk, locale
-from archinstall.models.users import User
-
 from PySide6.QtWidgets import (
-    QApplication, QWizard, QWizardPage,
-    QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QComboBox, QProgressBar, QTextEdit, QWidget
+    QApplication, QWizard, QWizardPage, QVBoxLayout,
+    QLabel, QLineEdit, QComboBox, QProgressBar,
+    QTextEdit, QPushButton
 )
 from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtGui import QFont
@@ -30,104 +24,112 @@ class InstallWorker(QThread):
 
     def run(self):
         try:
+            import time
+            from archinstall.lib.args import ArchConfigHandler
+            from archinstall.lib.disk.filesystem import FilesystemHandler
+            from archinstall.lib.installer import Installer
+            from archinstall.lib.mirror.mirror_handler import MirrorListHandler
+            from archinstall.lib.authentication.authentication_handler import AuthenticationHandler
+            from archinstall.lib.applications.application_handler import ApplicationHandler
+            from archinstall.lib.models import Bootloader
+            from archinstall.lib.models.users import User
+            from archinstall.lib.output import info
+
             c = self.config
-            self.progress.emit("Partitioning disk…")
 
-            device = disk.fetch_disk_from_path(c["disk"])
-            modifications = disk.DeviceModification(device=device, wipe=True)
-
-            # EFI boot partition
-            modifications.add_partition(disk.PartitionModification(
-                status=disk.ModificationStatus.Create,
-                type=disk.PartitionType.Primary,
-                start=disk.Size(1, disk.Unit.MiB),
-                length=disk.Size(512, disk.Unit.MiB),
-                mountpoint=Path("/boot"),
-                fs_type=disk.FilesystemType.Fat32,
-                flags=[disk.PartitionFlag.Boot],
-            ))
-
-            # Root partition — rest of disk
-            modifications.add_partition(disk.PartitionModification(
-                status=disk.ModificationStatus.Create,
-                type=disk.PartitionType.Primary,
-                start=disk.Size(513, disk.Unit.MiB),
-                length=disk.Size(100, disk.Unit.Percentage),
-                mountpoint=Path("/"),
-                fs_type=disk.FilesystemType.Ext4,
-            ))
-
-            disk_config = disk.DiskLayoutConfiguration(
-                config_type=disk.DiskLayoutType.Default,
-                device_modifications=[modifications],
-            )
-            disk.partition_device(disk_config)
-
-            self.progress.emit("Mounting and installing base system…")
-            with Installer(
-                target=Path(c["mountpoint"]),
-                disk_config=disk_config,
-                kernels=["linux"],
-            ) as install:
-                install.mount_ordered_layout()
-                install.minimal_installation(hostname=c["hostname"])
-
-                self.progress.emit("Installing packages…")
-                install.add_additional_packages([
-                    # Base
-                    "base-devel", "linux-headers", "sudo", "nano", "git",
-                    "networkmanager", "grub", "efibootmgr", "os-prober",
-
-                    # Hyprland stack
+            # Build archinstall config as JSON and pass via --config
+            config_data = {
+                "hostname": c["hostname"],
+                "kernels": ["linux"],
+                "packages": [
+                    "base-devel", "git", "nano",
                     "hyprland", "uwsm", "hyprpaper", "hyprpolkitagent",
                     "hyprshot", "hyprsunset",
                     "xdg-desktop-portal-hyprland", "xdg-desktop-portal-gtk",
-
-                    # Display manager
                     "greetd", "greetd-regreet",
-
-                    # Audio
                     "pipewire", "pipewire-pulse", "wireplumber",
-
-                    # Qt / theming
                     "qt6ct", "noto-fonts-emoji", "ttf-nerd-fonts-symbols",
-
-                    # Apps
                     "btop", "chromium", "dconf-editor", "featherpad",
                     "firefox", "gnome-keyring", "gvfs-smb", "imv",
                     "kitty", "mission-center", "mpv", "nautilus",
                     "power-profiles-daemon", "quickshell", "samba",
-                    "timeshift", "wiremix",
+                    "timeshift", "wiremix", "xdg-user-dirs", "os-prober",
+                ],
+                "services": ["NetworkManager", "greetd", "power-profiles-daemon"],
+                "timezone": c["timezone"],
+                "bootloader": "grub",
+                "mirror_config": {
+                    "mirror_regions": {
+                        "Worldwide": ["https://geo.mirror.pkgbuild.com/$repo/os/$arch"]
+                    }
+                },
+            }
 
-                    # Misc
-                    "xdg-user-dirs",
-                ])
+            # Write config to temp file
+            config_path = Path("/tmp/archinstall-config.json")
+            creds_path = Path("/tmp/archinstall-creds.json")
 
-                self.progress.emit("Creating user…")
-                install.create_users(User(
-                    username=c["username"],
-                    password=c["password"],
-                    sudo=True,
-                ))
+            config_path.write_text(json.dumps(config_data))
 
-                self.progress.emit("Setting locale…")
-                install.set_locale(c["locale"], c["encoding"])
+            creds_data = {
+                "!users": [
+                    {
+                        "username": c["username"],
+                        "!password": c["password"],
+                        "sudo": True
+                    }
+                ]
+            }
+            creds_path.write_text(json.dumps(creds_data))
 
-                self.progress.emit("Enabling services…")
-                install.enable_service("NetworkManager")
-                install.enable_service("greetd")
-                install.enable_service("power-profiles-daemon")
+            self.progress.emit("Building disk layout...")
 
-                self.progress.emit("Copying dotfiles from /etc/skel…")
-                # skel is already applied by useradd; also copy greetd config
-                target = Path(c["mountpoint"])
-                greetd_dst = target / "etc/greetd"
-                greetd_dst.mkdir(parents=True, exist_ok=True)
-                for f in Path("/etc/greetd").iterdir():
-                    shutil.copy2(f, greetd_dst / f.name)
+            # Use archinstall CLI in silent mode with our config
+            # This is the most stable way to drive archinstall 4.x
+            cmd = [
+                "python3", "-m", "archinstall",
+                "--config", str(config_path),
+                "--creds", str(creds_path),
+                "--disk-layouts", json.dumps(self._build_disk_layout(c["disk"])),
+                "--silent",
+            ]
 
-                self.progress.emit("Installing bootloader…")
-                install.add_bootloader(archinstall.models.bootloader.Bootloader.Grub)
+            self.progress.emit("Starting installation...")
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            for line in process.stdout:
+                self.progress.emit(line.strip())
+
+            process.wait()
+
+            if process.returncode != 0:
+                self.finished.emit(False, f"archinstall exited with code {process.returncode}")
+                return
+
+            # Copy dotfiles from skel to new user's home
+            self.progress.emit("Copying dotfiles...")
+            user_home = Path(f"/mnt/home/{c['username']}")
+            skel = Path("/etc/skel")
+            if skel.exists() and user_home.exists():
+                import shutil
+                for item in skel.iterdir():
+                    dst = user_home / item.name
+                    if item.is_dir():
+                        if dst.exists():
+                            shutil.rmtree(dst)
+                        shutil.copytree(item, dst)
+                    else:
+                        shutil.copy2(item, dst)
+                # Fix ownership
+                uid_gid = f"{1000}:{1000}"
+                subprocess.run(["chown", "-R", uid_gid, str(user_home)])
 
             self.progress.emit("✓ Installation complete — you can reboot now.")
             self.finished.emit(True, "")
@@ -136,32 +138,56 @@ class InstallWorker(QThread):
             import traceback
             self.finished.emit(False, traceback.format_exc())
 
+    def _build_disk_layout(self, disk: str) -> list:
+        return [
+            {
+                "device": disk,
+                "wipe": True,
+                "partitions": [
+                    {
+                        "boot": True,
+                        "esp": True,
+                        "mountpoint": "/boot",
+                        "size": "512MiB",
+                        "fs_type": "fat32",
+                    },
+                    {
+                        "mountpoint": "/",
+                        "size": "100%",
+                        "fs_type": "ext4",
+                    }
+                ]
+            }
+        ]
 
-# ── Wizard pages ──────────────────────────────────────────────────────────────
+
+# ── Pages ─────────────────────────────────────────────────────────────────────
 
 class LocalePage(QWizardPage):
     def __init__(self):
         super().__init__()
-        self.setTitle("Locale & keyboard")
+        self.setTitle("Locale & timezone")
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
         self.locale_combo = QComboBox()
-        self.locale_combo.addItems([
-            "en_US", "en_GB", "de_DE", "fr_FR", "es_ES",
-            "pt_BR", "ja_JP", "zh_CN", "ko_KR",
-        ])
+        self.locale_combo.addItems(["en_US", "en_GB", "de_DE", "fr_FR", "es_ES", "pt_BR"])
         self.registerField("locale*", self.locale_combo, "currentText")
 
-        self.kb_combo = QComboBox()
-        self.kb_combo.addItems(["us", "uk", "de", "fr", "es", "br", "jp"])
-        self.registerField("keymap*", self.kb_combo, "currentText")
+        self.tz_combo = QComboBox()
+        self.tz_combo.addItems([
+            "UTC", "America/New_York", "America/Chicago",
+            "America/Denver", "America/Los_Angeles",
+            "Europe/London", "Europe/Berlin", "Europe/Paris",
+            "Asia/Tokyo", "Asia/Shanghai", "Australia/Sydney",
+        ])
+        self.registerField("timezone*", self.tz_combo, "currentText")
 
         layout.addWidget(QLabel("Locale:"))
         layout.addWidget(self.locale_combo)
         layout.addSpacing(8)
-        layout.addWidget(QLabel("Keyboard layout:"))
-        layout.addWidget(self.kb_combo)
+        layout.addWidget(QLabel("Timezone:"))
+        layout.addWidget(self.tz_combo)
         layout.addStretch()
 
 
@@ -173,7 +199,7 @@ class DiskPage(QWizardPage):
         layout.setSpacing(10)
 
         self.disk_combo = QComboBox()
-        self._populate_disks()
+        self._populate()
         self.registerField("disk*", self.disk_combo, "currentText")
 
         warning = QLabel("⚠  The selected disk will be completely wiped.")
@@ -185,12 +211,13 @@ class DiskPage(QWizardPage):
         layout.addWidget(warning)
         layout.addStretch()
 
-    def _populate_disks(self):
+    def _populate(self):
         try:
             result = subprocess.run(
                 ["lsblk", "-J", "-o", "NAME,SIZE,TYPE,MODEL"],
                 capture_output=True, text=True
             )
+            import json
             for dev in json.loads(result.stdout)["blockdevices"]:
                 if dev["type"] == "disk":
                     model = dev.get("model") or ""
@@ -253,14 +280,13 @@ class InstallPage(QWizardPage):
 
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setFont(QFont("monospace", 10))
+        self.log.setFont(QFont("monospace", 9))
 
         self.bar = QProgressBar()
         self.bar.setRange(0, 0)
 
         layout.addWidget(self.log)
         layout.addWidget(self.bar)
-        self._worker = None
         self._done = False
 
     def initializePage(self):
@@ -268,13 +294,12 @@ class InstallPage(QWizardPage):
         disk_raw = w.field("disk").split()[0]
 
         config = {
-            "disk":       disk_raw,
-            "mountpoint": "/mnt",
-            "hostname":   w.field("hostname"),
-            "username":   w.field("username"),
-            "password":   w.field("password"),
-            "locale":     w.field("locale"),
-            "encoding":   "UTF-8",
+            "disk":     disk_raw,
+            "hostname": w.field("hostname"),
+            "username": w.field("username"),
+            "password": w.field("password"),
+            "locale":   w.field("locale"),
+            "timezone": w.field("timezone"),
         }
 
         self._worker = InstallWorker(config)
@@ -294,12 +319,12 @@ class InstallPage(QWizardPage):
         return self._done
 
 
-# ── Main wizard ───────────────────────────────────────────────────────────────
+# ── Wizard ────────────────────────────────────────────────────────────────────
 
 class InstallerWizard(QWizard):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Arch Installer")
+        self.setWindowTitle("Porthole Installer")
         self.setMinimumSize(860, 580)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.addPage(LocalePage())
@@ -310,7 +335,7 @@ class InstallerWizard(QWizard):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setApplicationName("arch-installer")
+    app.setApplicationName("porthole-installer")
     wiz = InstallerWizard()
     wiz.show()
     sys.exit(app.exec())
